@@ -1,0 +1,564 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+This data contains daily time series summary tables, including confirmed, deaths and recovered of covid 19. All data is read in from the daily case report.
+
+Two time series tables are for the US confirmed cases and deaths, reported at the county level. They are named time_series_covid19_confirmed_US.csv, time_series_covid19_deaths_US.csv, respectively.
+
+Three time series tables are for the global confirmed cases, recovered cases and deaths. Australia, Canada and China are reported at the province/state level. Dependencies of the Netherlands, the UK, France and Denmark are listed under the province/state level. The US and other countries are at the country level. The tables are renamed time_series_covid19_confirmed_global.csv and time_series_covid19_deaths_global.csv, and time_series_covid19_recovered_global.csv, respectively.
+
+The source of COVID-19 data belongs to the Johns Hopkins University website and is downloaded from https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series
+
+# Step 1: Import data
+
+
+```{R}
+#install.packages("tidyverse")
+```
+
+
+```{R}
+# install libraries
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(reshape2)
+```
+
+
+```{R}
+# create urls for data
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <- c("time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_global.csv", "time_series_covid19_confirmed_US.csv", "time_series_covid19_deaths_US.csv")
+urls <- str_c(url_in, file_names)
+urls
+```
+
+
+```{R}
+# read time series covid19 global cases and view some first rows
+global_cases <- read_csv(urls[1])
+head(global_cases)
+```
+
+
+```{R}
+# read time series covid19 global deaths and view some first rows
+global_deaths <- read_csv(urls[2])
+head(global_deaths)
+```
+
+
+```{R}
+# read time series covid19 us cases and view some first rows
+us_cases <- read_csv(urls[3])
+head(us_cases)
+```
+
+
+```{R}
+# read time series covid19 us deaths and view some first rows
+us_deaths <- read_csv(urls[4])
+head(us_deaths)
+```
+
+# Step 2: Tidy and Transform Data
+
+
+```{R}
+# remove unused columns of the us_cases and convert date from column to row
+us_cases <- us_cases %>% pivot_longer(cols = -(UID:Combined_Key), names_to = "date", values_to = "cases") %>%
+  select(Admin2:cases) %>% mutate(date = mdy(date)) %>% select(-c(Lat, Long_))
+head(us_cases)
+```
+
+
+```{R}
+# remove unused columns of the us_deaths and convert date from column to row
+us_deaths <- us_deaths %>% pivot_longer(cols = -(UID:Population), names_to = "date", values_to = "deaths") %>%
+  select(Admin2:deaths) %>% mutate(date = mdy(date)) %>% select(-c(Lat, Long_))
+head(us_deaths)
+```
+
+
+```{R}
+# create us by full join us deaths and us cases
+US <- us_cases %>% full_join(us_deaths)
+head(US)
+```
+
+
+```{R}
+# summary us data
+US <- US %>% filter(cases > 0)
+summary(US)
+```
+
+
+```{R}
+# Quick glimpse data also tells us the number of rows (observations), columns (variables) and type of data
+glimpse(US)
+```
+
+
+```{R}
+# check missing values
+sapply(US,function(x) sum(is.na(x)))
+```
+
+
+```{R}
+# remove unused columns of the global_cases and convert date from column to row
+global_cases <- global_cases %>% pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to = "date", values_to = "cases") %>%
+  select(-c(Lat,Long))
+head(global_cases)
+```
+
+
+```{R}
+# remove unused columns of the global_deaths and convert date from column to row
+global_deaths <- global_deaths %>% pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to = "date", values_to = "deaths") %>%
+  select(-c(Lat,Long))
+head(global_deaths)
+```
+
+
+```{R}
+# create global by full join global deaths and global cases
+global <- global_cases %>% full_join(global_deaths) %>% rename(Country_Region = 'Country/Region', Province_State = 'Province/State') %>% mutate(date = mdy(date))
+head(global)
+```
+
+
+```{R}
+# add a variable called combined_key that combines Province state and Country region into the global
+global <- global %>% unite("Combined_Key", c(Province_State, Country_Region), sep = ", ", na.rm = TRUE, remove =  FALSE)
+head(global)
+```
+
+
+```{R}
+# summary global data
+global <- global %>% filter(cases > 0)
+summary(global)
+```
+
+
+```{R}
+# add a population to the global data by getting information from a csv file of Johns Hopkins website
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+uid <- read_csv(uid_lookup_url) %>% select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+```
+
+
+```{R}
+# add population to the global data
+global <- global %>% left_join(uid, by = c("Province_State", "Country_Region")) %>% select(-c(UID, FIPS)) %>% select(Province_State, Country_Region, date, cases, deaths, Population, Combined_Key)
+head(global)
+```
+
+
+```{R}
+# Quick glimpse data also tells us the number of rows (observations), columns (variables) and type of data
+glimpse(global)
+```
+
+
+```{R}
+# check missing values
+sapply(global,function(x) sum(is.na(x)))
+```
+
+# Step 3: Add Visualizations and Analysis
+
++ Now, after cleaning up data, I'll analyze and visualize data.
+
+### Question 1: How many Cases and Deaths in US by year?
+
+
+```{R}
+# create a table of US by year
+us_by_year <- US %>% 
+  mutate(YEAR = format(as.Date(US$date, format="%Y/%m/%d"),"%Y")) %>% 
+  group_by(YEAR) %>% 
+  summarise(CASES = sum(cases), DEATHS = sum(deaths))  
+us_by_year
+```
+
+
+```{R}
+# Number of cases, deaths by year in US
+us_number_of_cases_20 = us_by_year[us_by_year$YEAR == "2020", "CASES"]
+us_number_of_deaths_20 = us_by_year[us_by_year$YEAR == "2020", "DEATHS"]
+us_number_of_cases_21 = us_by_year[us_by_year$YEAR == "2021", "CASES"]
+us_number_of_deaths_21 = us_by_year[us_by_year$YEAR == "2021", "DEATHS"]
+us_number_of_cases_22 = us_by_year[us_by_year$YEAR == "2022", "CASES"]
+us_number_of_deaths_22 = us_by_year[us_by_year$YEAR == "2022", "DEATHS"]
+```
+
+
+```{R}
+print(paste("The number of covid19 cases in 2020 was: ",us_number_of_cases_20,"."))
+print(paste("The number of covid19 deaths in 2020 was: ",us_number_of_deaths_20,"."))
+print(paste("The number of covid19 cases in 2021 was: ",us_number_of_cases_21,"."))
+print(paste("The number of covid19 deaths in 2021 was: ",us_number_of_deaths_21,"."))
+print(paste("The number of covid19 cases in 2022 was: ",us_number_of_cases_22,"."))
+print(paste("The number of covid19 deaths in 2022 was: ",us_number_of_deaths_22,"."))
+```
+
+
+```{R}
+# plot the chart of US cases and deaths by year
+ggplot(data=melt(us_by_year, id.vars=c("YEAR")), aes(x=YEAR, y=format(value, scientific = FALSE, big.mark = ','), fill=variable)) +
+geom_bar(stat="identity", color="black", position=position_dodge())+ scale_y_discrete(name="COUNT") +
+  theme_minimal() + scale_fill_manual(values=c('#E69F00', '#999999')) +
+ggtitle("COVID19 - US's Cases And Deaths By Year")
+```
+
+As the plot above, we can see that, the most US covid19 cases and deaths were in 2021. The number of cases were increase 11,537,580,769 (from 1,725,975,699 to 13,263,556,468). The number of deaths were increase 177,576,887 (from 46,610,849 to 224,187,736). Because now is just the beginning of the year, the number of covid19 cases and deaths in 2022 were smaller than 2021 and 2020.
+
+### Question 2: How many cases and deaths in US by state? 
+
+
+```{R}
+# create a table of US by state
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>%
+  select(Province_State, Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+head(US_by_state)
+```
+
+
+```{R}
+# create a dataframe y with the catagories of US Province_State and the number of cases and deaths of each province
+y <- US_by_state %>% group_by(Province_State) %>% summarise(CASES = sum(cases), DEATHS = sum(deaths))%>% 
+mutate(DEATHS_PER_CASES_RATE = round(DEATHS / CASES * 100, 2)) %>%
+select(Province_State, CASES, DEATHS, DEATHS_PER_CASES_RATE)
+as.data.frame(y)
+```
+
+
+```{R}
+max_cases <- max(y$CASES)
+min_cases <- min(y$CASES)
+max_deaths <- max(y$DEATHS)
+min_deaths <- min(y$DEATHS)
+```
+
+
+```{R}
+print(paste("The maximum number of covid19 cases was:",max_cases,"in", y$Province_State[y$CASES==max_cases],"."))
+print(paste("The minimum number of covid19 cases was:",min_cases,"in", y$Province_State[y$CASES==min_cases],"."))
+print(paste("The maximum number of covid19 deaths was:",max_deaths,"in", y$Province_State[y$DEATHS==max_deaths],"."))
+print(paste("The minimum number of covid19 deaths was:",min_deaths,"in", y$Province_State[y$DEATHS==min_deaths],"."))
+```
+
+
+```{R}
+# plot the US's cases and deaths chart
+ggplot(data=melt(y[, 1:3], id.vars=c("Province_State")), aes(x=Province_State, y=format(value, scientific = FALSE, big.mark = ','), fill=variable)) + 
+     geom_bar(stat="identity", colour="black")+  
+         coord_flip() + scale_y_discrete(name="") +
+      theme(axis.title.x=element_blank(),
+      axis.title.y=element_blank(),axis.text.x = element_blank(),
+          axis.text.y = element_text(face="bold", color="#008000",
+                           size=8, angle=0))+
+     ggtitle("COVID19 - US's Cases And Deaths By State")
+```
+
+This plot tells us that the maximum number of covid 19 cases was in California and the minimum of covid 19 cases was in  American Samoa. Diamond Princess and American Samoa were the places have no death cases. Moreover, Texas, New York and Florida were the states have the large number of covid 19 cases and deaths. And Grand Princess and Northern were the states have the small number of covid 19 cases and deaths.
+
+### Question 3: What is the rate of deaths per cases in US by state?
+
+
+```{R}
+max_rate <- max(y$DEATHS_PER_CASES_RATE)
+min_rate <- min(y$DEATHS_PER_CASES_RATE)
+```
+
+
+```{R}
+print(paste("The highest rate of covid19 deaths per cases was:",max_rate,"in", y$Province_State[y$DEATHS_PER_CASES_RATE==max_rate],"."))
+print(paste("The lowest rate of covid19 deaths per cases was:",min_rate,"in", y$Province_State[y$DEATHS_PER_CASES_RATE==min_rate],"."))
+```
+
+
+```{R}
+# plot the chart of US deaths by state
+ggplot(data=y, aes(x=Province_State, y=DEATHS_PER_CASES_RATE, fill=Province_State)) +
+geom_bar(stat="identity", width=0.5)+ theme_minimal() + 
+         coord_flip()+
+geom_text(aes(label=DEATHS_PER_CASES_RATE), vjust=0, color="black",
+            position = position_dodge(2), size=2.5)+
+scale_y_discrete(name="DEATHS")+ theme(axis.title.x=element_blank(),
+      axis.title.y=element_blank(),axis.text.x = element_blank(),
+          axis.text.y = element_text(face="bold", color="#008000",
+                           size=8, angle=0),legend.position="none")+
+ggtitle("COVID19 - The Rate of Deaths Per Cases In US By State")
+```
+
+As we can see, all but two states have the death cases. Moreover, the two states are Alaska and Utah have the low rates of deaths per cases (0.53% and 0.56% respectively). The highest rate of covid 19 deaths per cases was in New Jersey (2.97%).
+
+### Question 4: How were the trend of new cases and new deaths in US?
+
+
+```{R}
+# Create the data for the chart
+US_totals <- US_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>%
+  select(Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+```
+
+
+```{R}
+US_totals <- US_totals %>%
+  mutate(new_cases = cases - lag(cases), new_deaths = deaths - lag(deaths))
+tail(US_totals)
+```
+
+
+```{R}
+# visualize the chart of trend of US cases and deaths
+US_totals %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = new_cases)) + 
+  geom_line(aes(color = "new_cases")) + 
+  geom_point(aes(color = "new_cases")) + 
+  geom_line(aes(y = new_deaths, color = "new_deaths")) + 
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID19 - New Cases And New Deaths in US", y = NULL)
+```
+
+This plot tells us that the number of new cases and new deaths increased most in March 2020. After that, there was a decrease of new cases and new deaths in July 2021 but the new cases increased again from September 2021 to now. And there were still a lot of new deaths until now.
+
+### Question 5: How many cases and deaths globally by year?
+
+
+```{R}
+global_totals <- global %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>%
+  select(Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+head(global_totals)
+```
+
+
+```{R}
+global_totals <- global_totals %>%
+  mutate(new_cases = cases - lag(cases), new_deaths = deaths - lag(deaths)) 
+tail(global_totals)
+```
+
+
+```{R}
+# Create the data for the chart
+n <- global_totals %>% filter(cases > 0) %>%
+mutate(YEAR = format(as.Date(global_totals$date, format="%Y/%m/%d"),"%Y")) %>% 
+  group_by(YEAR) %>% 
+  summarise(CASES = sum(cases), DEATHS = sum(deaths))  
+head(n)
+```
+
+
+```{R}
+# Visualize the number of cases and deaths globally by year
+ggplot(data=melt(n, id.vars=c("YEAR")), aes(x=YEAR, y=format(value, scientific = FALSE, big.mark = ','), fill=variable)) + 
+     geom_bar(width = 0.6, stat="identity", colour="black")+ 
+         scale_y_discrete(name="") +
+      theme(axis.text.x = element_text(face="bold", color="#008000",
+                           size=8, angle=0),
+          axis.text.y = element_text(face="bold", color="#008000",
+                           size=8, angle=0))+
+     ggtitle("COVID19 - Cases And Deaths Globally By Year")
+```
+
+As histogram above, until the beginning of 2022, the largest covid 19 cases globally was  67,108,487,035 and the largest covid 19 deaths globally was 1,408,075,970 in 2021.
+
+### Question 6: How were the trend of covid 19 cases and deaths globally by season?
+
+
+```{R}
+global_month <- global_totals %>% filter(cases>0) %>%
+  mutate(month = month(as.POSIXlt(date, format="%d/%m/%Y")) %>% as.integer() ) %>%
+  mutate(year = year(as.POSIXlt(date, format="%d/%m/%Y"))) %>%
+  select(year,month, cases, deaths)
+head(global_month)
+```
+
+
+```{R}
+global_month <- global_month %>%
+  group_by(year, month) %>%   
+  summarize(cases = sum(cases), deaths = sum(deaths))
+global_month
+```
+
+
+```{R}
+global_month <- global_month %>%
+  mutate(
+    season = case_when(
+      month %in%  9:11 ~ "Fall",
+      month %in%  c(12, 1, 2)  ~ "Winter",
+      month %in%  3:5  ~ "Spring",
+      TRUE ~ "Summer")) 
+global_season <- global_month %>% group_by(season) %>%
+     summarize(cases = sum(cases), deaths = sum(deaths)) %>%
+     mutate(freq_cases = round(cases / sum(cases)*100, 2))%>% 
+     mutate(freq_deaths = round(deaths / sum(deaths)*100, 2))%>%
+     select(season, cases, deaths, freq_cases, freq_deaths)
+global_season   
+```
+
+
+```{R}
+data1 <- melt(global_season[,1:3], id.vars=c("season"))
+data2 <- melt(global_season %>% select(season, freq_cases, freq_deaths), id.vars=c("season"))
+```
+
+
+```{R}
+data1 <- melt(global_season[,1:3], id.vars=c("season"))
+data2 <- melt(global_season %>% select(season, freq_cases, freq_deaths), id.vars=c("season"))
+
+par(mfrow = c(1, 2))
+ggplot(data1, aes(x = factor(season), y = format(value, scientific = FALSE, big.mark = ','), colour = variable, group = variable)) +
+  geom_line(stat="identity", size = 1)+ 
+         scale_y_discrete(name="COUNT") + scale_x_discrete(name="SEASON") +
+      theme(axis.text.x = element_text(face="bold", color="#008000",
+                           size=8, angle=0),
+          axis.text.y = element_text(face="bold", color="#008000",
+                           size=8, angle=0))+
+     ggtitle("COVID19 - Cases And Deaths Globally By Season")
+
+ggplot(data2, aes(x = factor(season), y = format(value, scientific = FALSE, big.mark = ','), colour = variable, group = variable)) +
+  geom_line(stat="identity", size = 1)+ 
+         scale_y_discrete(name="RATE") + scale_x_discrete(name="SEASON") +
+      theme(axis.text.x = element_text(face="bold", color="#008000",
+                           size=8, angle=0),
+          axis.text.y = element_text(face="bold", color="#008000",
+                           size=8, angle=0))+
+     ggtitle("COVID19 - Frequent Cases And Deaths Globally By Season")
+
+```
+
+The two plots above tell us that the most globally covid 19 cases were 25,700,216,207 and the most globally covid 19 deaths were 552,056,898 in fall. The least globally covid 19 cases were 13,245,536,482 and the least globally covid 19 deaths were 301,445,593 in spring. The most frequent cases were 31.45% in fall, the least frequent cases were 16.21% in spring. The most frequent deaths were 31.32% in fall and the least frequent deaths were 17.1% in spring.
+
+## Build model and visualization
+
+
+```{R}
+# create the data to build the model
+US_month <- US_totals %>% filter(cases>0) %>%
+  mutate(month = month(as.POSIXlt(date, format="%d/%m/%Y")) %>% as.integer() ) %>%
+  group_by(Country_Region, month) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths)) %>%
+  select(Country_Region, month, cases, deaths)
+US_month
+```
+
+
+```{R}
+# create US covid19 with cases, deaths, frequent cases and deaths by month
+US_month <- US_month %>%
+   mutate(freq_cases = round(cases / sum(cases)*100, 2))%>% 
+   mutate(freq_deaths = round(deaths / sum(deaths)*100, 2))
+US_month 
+```
+
+
+```{R}
+# Use the lm() function to perform a polinomial regression with frequent cases as the response
+# and month as the predictor. 
+# Use the summary() function to print the results
+mod1 <- lm(freq_cases ~ poly(month, 2, raw=TRUE), data = US_month)
+summary(mod1)
+```
+
+Looking at the summary of this model, we can see that our p-value is very small, this means that the predictor (month) were statistically significant in determining the response (frequent cases). And the frequent cases is 11.02477 - 1.80340 X month + 0.16674 X $month^{2}$.  
+
+
+```{R}
+# create new data with the predict of the frequent cases by the month
+US_month_w_pred <- US_month %>% mutate(PREDICT = round(predict(mod1), 2))
+US_month_w_pred
+```
+
+
+```{R}
+# plot the new data
+US_month_w_pred %>% ggplot() + geom_line(aes(x = format(month, scientific = FALSE, big.mark = ','), y = format(freq_cases, scientific = FALSE, big.mark = ','), group=1), color = "blue") + 
+  geom_line(aes(x = format(month, scientific = FALSE, big.mark = ','), y = format(PREDICT, scientific = FALSE, big.mark = ','),group=1), color = "red", size = 1) +
+         scale_y_discrete(name="FREQUENT CASES") + scale_x_discrete(name="MONTH") +
+      theme(axis.text.x = element_text(face="bold", color="#008000",
+                           size=8, angle=0),
+          axis.text.y = element_text(face="bold", color="#008000",
+                           size=8, angle=0))+
+     ggtitle("COVID19 - US Frequent Cases Prediction By Month")
+```
+
+In the plot above, our predictions are in red and our actuals are in blue. So we can see the model does a reasonably good job of predicting from month 7 to 12.
+
+
+```{R}
+# Use the lm() function to perform a regression with frequent deaths as the response
+# and frequent cases as the predictor. 
+# Use the summary() function to print the results
+mod2 <- lm(freq_deaths ~ freq_cases, data = US_month)
+summary(mod2)
+```
+
++ Looking at the summary of this model, we can see that our p-value is very small, this means that the predictor (frequent cases) were statistically significant in determining the response (frequent deaths). And the frequent deaths is 1.90183 + 0.77180 X frequent cases.  
++ The regression coefficient for frequent cases is: 0.77180, this means an increase of frequent cases is associated with an increase of frequent deaths by 0.77180%, keeping all else constant.
+
+
+```{R}
+# create new data with predict the monthly frequent deaths by the monthly frequent cases
+US_month_w_d_pred <- US_month %>% mutate(PRED = round(predict(mod2), 2))
+US_month_w_d_pred
+```
+
+
+```{R}
+# plot the new data
+US_month_w_d_pred %>% ggplot() + geom_line(aes(x = format(freq_deaths, scientific = FALSE, big.mark = ','), y = format(freq_cases, scientific = FALSE, big.mark = ','), group=1), color = "blue") + 
+  geom_line(aes(x = format(freq_deaths, scientific = FALSE, big.mark = ','), y = format(PRED, scientific = FALSE, big.mark = ','),group=1), color = "red", size = 1) +
+         scale_y_discrete(name="FREQUENT DEATHS") + scale_x_discrete(name="FREQUENT CASES") +
+      theme(axis.text.x = element_text(face="bold", color="#008000",
+                           size=8, angle=0),
+          axis.text.y = element_text(face="bold", color="#008000",
+                           size=8, angle=0))+
+     ggtitle("COVID19 - US Frequent Deaths Prediction By Frequent Cases")
+```
+
+In the plot above, our predictions are in red and our actuals are in blue. So we can see the model does a reasonably good job in predicting frequent deaths by frequent cases.
+
+# Step 4: Conclusion and add bias identification
+
+In conclusion, base on US covid 19 and Global covid 19 data from the Johns Hopkins University:
+
+* First, while cleaning up the data, I recognized that there are a lot of missing values about Province_State and Population in global data, US covid 19 data has missing values of admin2 as well. Missing data can be a major cause of information bias, where certain groups of people are more likely to have missing data. Since this is a huge number, deleting the instances with missing observations can result in biased parameters and estimates and reduce the statistical power of the analysis. 
+
+* Next, by plotting the COVID 19 - US Cases And Deaths By Year, we can see that the most of covid 19 cases and deaths were in 2021.
+
+* As "COVID19 - US's Cases And Deaths By State" histogram, we see that the maximum number of covid 19 cases was in California and the minimum of covid 19 cases was in American Samoa. Diamond Princess and American Samoa were the places have no death cases. Moreover, Texas, New York and Florida were the states have the large number of covid 19 cases and deaths. And Grand Princess and Northern were the states have the small number of covid 19 cases and deaths.
+
+* COVID19 - The Rate of Deaths Per Cases In US By State histogram tells us that all but two states have the death cases. Moreover, the two states are Alaska and Utah have the low rates of deaths per cases. The highest rate of covid 19 deaths per cases was in New Jersey.
+
+* COVID19 - New Cases And New Deaths in US chart shows that the number of new cases and new deaths increased most in March 2020. After that, there was a decrease of new cases and new deaths in July 2021 but the new cases increased again from September 2021 to now. And there were still a lot of new deaths until now.
+
+* Base on COVID19 - Cases And Deaths Globally By Year plot,until the beginning of 2022, the largest covid 19 cases globally was 67,108,487,035 and the largest covid 19 deaths globally was 1,408,075,970 in 2021.
+
+* The most globally covid 19 cases and deaths were in fall. The least globally covid 19 cases and deaths were in spring. The most frequent cases were 31.45% in fall, the least frequent cases were 16.21% in spring. The most frequent deaths were 31.32% in fall and the least frequent deaths were 17.1% in spring.
